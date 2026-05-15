@@ -101,9 +101,9 @@ void DumpDeviceReports(int deviceIndex, HidDevice device, object outputLock, Can
 
 			lock (outputLock) {
 				// Console.WriteLine($"{timestamp} [{deviceIndex}] {device.DevicePath} {hex}");
-				Console.WriteLine($"{timestamp} [{deviceIndex}] {device.DevicePath} {bitString}");
-				// Console.WriteLine(report.ToString());
-				Console.WriteLine(report.inputs.ToString());
+				// Console.WriteLine($"{timestamp} [{deviceIndex}] {device.DevicePath} {bitString}");
+				Console.WriteLine(report.ToString());
+				// Console.WriteLine(report.inputs.ToString());
 			}
 		}
 	} catch (Exception ex) {
@@ -116,7 +116,7 @@ void DumpDeviceReports(int deviceIndex, HidDevice device, object outputLock, Can
 string ToBitString(byte[] buffer, int length) {
 	var sb = new StringBuilder(length * 8);
 	for (var i = 0; i < length; i++) {
-		sb.Append(Convert.ToString(buffer[i], 2).PadLeft(8, '0'));
+		sb.Append(Convert.ToString(buffer[i], 2).PadLeft(8, '0') + " ");
 	}
 
 	return sb.ToString();
