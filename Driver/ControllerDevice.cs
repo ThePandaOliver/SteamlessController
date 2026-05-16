@@ -1,6 +1,6 @@
 ﻿using HidSharp;
 
-namespace SteamlessControllerDriver;
+namespace SteamlessController.Driver;
 
 public class ControllerDevice(HidDevice hidDevice) {
 	public string DevicePath => hidDevice.DevicePath;

@@ -1,4 +1,4 @@
-﻿namespace SteamlessControllerDriver.utils;
+﻿namespace SteamlessController.Driver.utils;
 
 /// <summary>
 /// A utility for reading values at the bit level from a byte buffer.

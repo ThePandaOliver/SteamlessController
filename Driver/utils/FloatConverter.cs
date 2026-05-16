@@ -1,4 +1,4 @@
-﻿namespace SteamlessControllerDriver.utils;
+﻿namespace SteamlessController.Driver.utils;
 
 /// <summary>
 /// Simple utility to convert raw bit values into floats (normalized).

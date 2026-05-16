@@ -1,13 +1,14 @@
-﻿using System.Text;
-using HidSharp;
-using SteamlessControllerDriver.utils;
+﻿using HidSharp;
+using SteamlessController.Driver.utils;
 
-namespace SteamlessControllerDriver;
+namespace SteamlessController.Driver;
 
 public static class SteamlessDriver {
 	public const uint VendorId = 0x28DE;
 	public static readonly int[] ProductIds = [0x1302, 0x1304];
 	public static readonly object OutputLock = new();
+
+	private static CancellationToken _cancellationToken;
 
 	public static int Main(string[] args) {
 		using var cts = new CancellationTokenSource();
@@ -17,15 +18,20 @@ public static class SteamlessDriver {
 			cts.Cancel();
 		};
 		Console.CancelKeyPress += cancelHandler;
+		_cancellationToken = cts.Token;
 
-		DeviceList.Local.Changed += (_, e) => {
-			Console.WriteLine("Device list changed. Rescanning...");
-			ControllerManager.ScanForDevices(cts.Token);
+		AppDomain.CurrentDomain.ProcessExit += (_, _) => {
+
 		};
 
-		// Initial device scan
-		ControllerManager.ScanForDevices(cts.Token);
+		// DeviceList.Local.Changed += (_, e) => {
+		// 	Console.WriteLine("Device list changed. Rescanning...");
+		// 	ScanForDevices();
+		// };
 
+		// Initial device scan
+		ScanForDevices();
+		
 		try {
 			Console.WriteLine("Listening for HID input reports. Press Ctrl+C to stop.");
 			Task.WaitAll(ControllerManager.ActiveTasksByDevicePath.Values);
@@ -43,11 +49,18 @@ public static class SteamlessDriver {
 			Console.CancelKeyPress -= cancelHandler;
 		}
 		return 0;
+
+		void ScanForDevices() {
+			ControllerManager.ScanForDevices(_cancellationToken, DeviceLoop);
+		}
 	}
 	
-	private static void DumpDeviceReports(int deviceIndex, HidDevice device, object outputLock, CancellationToken token) {
+	private static void DeviceLoop(ControllerDevice device) {
+		var hidDevice = device.HidDevice;
+		var token = _cancellationToken;
 		try {
-			using var stream = device.Open();
+			// Open device and register device closing for when the cancellation token is triggered
+			using var stream = hidDevice.Open();
 			using var registration = token.Register(() => {
 				try {
 					stream.Close();
@@ -56,55 +69,41 @@ public static class SteamlessDriver {
 				}
 			});
 
-			var reportLength = Math.Max(1, device.GetMaxInputReportLength());
+			var reportLength = Math.Max(1, hidDevice.GetMaxInputReportLength());
 			var buffer = new byte[reportLength];
-			Console.WriteLine($"[{deviceIndex}] opened {device.DevicePath}");
+			Console.WriteLine($"Opened {device.DevicePath}");
 
+			// Devices update loop
 			while (!token.IsCancellationRequested) {
+				// Read the next hid report
 				int read;
 				try {
 					read = stream.Read(buffer, 0, buffer.Length);
-				} catch (Exception ex) when (ex is IOException or ObjectDisposedException or InvalidOperationException) {
+				} catch (Exception ex) when
+					(ex is IOException or ObjectDisposedException or InvalidOperationException) {
 					if (token.IsCancellationRequested) {
 						break;
 					}
 
-					lock (outputLock) {
-						Console.WriteLine($"[{deviceIndex}] read stopped: {ex.Message}");
-					}
-
+					Console.WriteLine($"Read stopped: {ex.Message}");
 					break;
 				}
 
-				if (read <= 0) {
-					continue;
-				}
+				// Skip if hid data is empty
+				if (read <= 0) continue;
 
-				var bitString = ToBitString(buffer, read);
-				var timestamp = DateTimeOffset.UtcNow.ToString("O");
+				// Decoding
 				var decoder = new BitDecoder(buffer, read);
-				var report = ControllerReport.Decode(decoder);
+				var reportId = decoder.ReadByte();
 
-				lock (outputLock) {
-					// Console.WriteLine($"{timestamp} [{deviceIndex}] {device.DevicePath} {hex}");
-					// Console.WriteLine($"{timestamp} [{deviceIndex}] {device.DevicePath} {bitString}");
-					Console.WriteLine(report.ToString());
-					// Console.WriteLine(report.inputs.ToString());
+				if (reportId == 0x42) {
+					// Console.WriteLine("Received input report");
+				} else {
+					Console.WriteLine($"Received unknown report: 0x{reportId:x2}");
 				}
 			}
-		} catch (Exception ex) {
-			lock (outputLock) {
-				Console.WriteLine($"[{deviceIndex}] failed to open/read HID device: {ex.Message}");
-			}
+		} catch (Exception e) {
+			Console.WriteLine($"Failed to open/read HID device: {e.Message}");
 		}
-	}
-
-	private static string ToBitString(byte[] buffer, int length) {
-		var sb = new StringBuilder(length * 8);
-		for (var i = 0; i < length; i++) {
-			sb.Append(Convert.ToString(buffer[i], 2).PadLeft(8, '0') + " ");
-		}
-
-		return sb.ToString();
 	}
 }

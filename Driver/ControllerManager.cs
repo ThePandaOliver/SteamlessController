@@ -1,6 +1,6 @@
 ﻿using HidSharp;
 
-namespace SteamlessControllerDriver;
+namespace SteamlessController.Driver;
 
 public static class ControllerManager {
 	public static readonly List<ControllerDevice> ActiveDevices = [];
@@ -9,18 +9,31 @@ public static class ControllerManager {
 	private static uint VendorId => SteamlessDriver.VendorId;
 	private static int[] ProductIds => SteamlessDriver.ProductIds;
 
-	public delegate void DeviceInputReportsReceivedHandler(ControllerDevice device, HidStream stream);
-	public static event DeviceInputReportsReceivedHandler? DeviceInputReportsReceived;
-
-	public static void ScanForDevices(CancellationToken ctsToken) {
+	public delegate void DeviceUpdateLoop(ControllerDevice device);
+	
+	public static void ScanForDevices(CancellationToken ctsToken, DeviceUpdateLoop deviceUpdateLoop) {
 		Console.WriteLine("Scanning for devices...");
 
+		// Get all compatible hid devices
 		var devices = DeviceList.Local.GetHidDevices()
 			.Where(d => d.VendorID == VendorId && ProductIds.Contains(d.ProductID))
 			.ToList();
-		
+
 		// Create new ControllerDevices
 		foreach (var device in devices) {
+			Console.WriteLine($"Found device: {device.DevicePath}");
+			Console.WriteLine($"    VendorID: {device.VendorID}, ProductID: {device.ProductID}");
+			
+			Console.WriteLine($"Testing device connection: {device.DevicePath}");
+			if (device.TryOpen(out var hidStream)) {
+				hidStream.Close();
+			} else {
+				Console.WriteLine($"Failed to open device: {device.DevicePath}");
+				Console.WriteLine($"    Device will be ignored");
+				continue;
+			}
+			
+			// Log successful connection
 			Console.Write($"Device connected: ");
 			var controllerDevice = new ControllerDevice(device);
 			controllerDevice.LogDeviceInfo();
@@ -28,49 +41,8 @@ public static class ControllerManager {
 
 			// Start a new task to handle the device's input reports
 			var devicePath = controllerDevice.DevicePath;
-			var task = Task.Run(() => CreateDeviceUpdateLoop(controllerDevice, ctsToken), ctsToken);
+			var task = Task.Run(() => deviceUpdateLoop(controllerDevice), ctsToken);
 			ActiveTasksByDevicePath[devicePath] = task;
-		}
-	}
-
-	private static void CreateDeviceUpdateLoop(ControllerDevice device, CancellationToken token) {
-		var hidDevice = device.HidDevice;
-		try { 
-			using var stream = hidDevice.Open();
-			using var registration = token.Register(() => {
-				try {
-					stream.Close();
-				} catch {
-					// ignored
-				}
-			});
-
-			var reportLength = Math.Max(1, hidDevice.GetMaxInputReportLength());
-			var buffer = new byte[reportLength];
-			Console.WriteLine($"Opened {device.DevicePath}");
-			
-			while (!token.IsCancellationRequested) {
-				int read;
-				try {
-					read = stream.Read(buffer, 0, buffer.Length);
-				} catch (Exception ex) when (ex is IOException or ObjectDisposedException or InvalidOperationException) {
-					if (token.IsCancellationRequested) {
-						break;
-					}
-
-					Console.WriteLine($"Read stopped: {ex.Message}");
-
-					break;
-				}
-				
-				if (read <= 0) {
-					continue;
-				}
-				
-				DeviceInputReportsReceived?.Invoke(device, stream);
-			}
-		} catch (Exception e) {
-			Console.WriteLine($"Failed to open/read HID device: {e.Message}");
 		}
 	}
 }
