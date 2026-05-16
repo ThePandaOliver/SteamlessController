@@ -1,4 +1,6 @@
 ﻿using HidSharp;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using SteamlessController.Driver.utils;
 
 namespace SteamlessController.Driver;
@@ -8,56 +10,31 @@ public static class SteamlessDriver {
 	public static readonly int[] ProductIds = [0x1302, 0x1304];
 	public static readonly object OutputLock = new();
 
-	private static CancellationToken _cancellationToken;
-
 	public static int Main(string[] args) {
-		using var cts = new CancellationTokenSource();
+		using var host = Host.CreateDefaultBuilder(args)
+			.UseWindowsService()
+			.Build();
 
-		ConsoleCancelEventHandler cancelHandler = (_, e) => {
-			e.Cancel = true;
-			cts.Cancel();
-		};
-		Console.CancelKeyPress += cancelHandler;
-		_cancellationToken = cts.Token;
+		var appStopping = host.Services
+			.GetRequiredService<IHostApplicationLifetime>()
+			.ApplicationStopping;
 
-		AppDomain.CurrentDomain.ProcessExit += (_, _) => {
+		using var cts = CancellationTokenSource.CreateLinkedTokenSource(appStopping);
 
-		};
+		ControllerManager.StartMonitoring(cts.Token, DeviceLoop);
 
-		// DeviceList.Local.Changed += (_, e) => {
-		// 	Console.WriteLine("Device list changed. Rescanning...");
-		// 	ScanForDevices();
-		// };
-
-		// Initial device scan
-		ScanForDevices();
-		
 		try {
-			Console.WriteLine("Listening for HID input reports. Press Ctrl+C to stop.");
-			Task.WaitAll(ControllerManager.ActiveTasksByDevicePath.Values);
-		} catch (AggregateException ex) when (cts.IsCancellationRequested) {
-			foreach (var inner in ex.Flatten().InnerExceptions) {
-				if (inner is OperationCanceledException) {
-					continue;
-				}
-
-				Console.WriteLine(inner.Message);
-			}
-
-			return 0;
+			host.Run();
 		} finally {
-			Console.CancelKeyPress -= cancelHandler;
+			cts.Cancel(); // request device loops to stop
+			ControllerManager.StopMonitoring(); // cancel tasks, close streams, clear state
 		}
-		return 0;
 
-		void ScanForDevices() {
-			ControllerManager.ScanForDevices(_cancellationToken, DeviceLoop);
-		}
+		return 0;
 	}
-	
-	private static void DeviceLoop(ControllerDevice device) {
+
+	private static void DeviceLoop(ControllerDevice device, CancellationToken token) {
 		var hidDevice = device.HidDevice;
-		var token = _cancellationToken;
 		try {
 			// Open device and register device closing for when the cancellation token is triggered
 			using var stream = hidDevice.Open();

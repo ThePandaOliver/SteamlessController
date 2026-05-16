@@ -5,6 +5,7 @@ namespace SteamlessController.Driver;
 public class ControllerDevice(HidDevice hidDevice) {
 	public string DevicePath => hidDevice.DevicePath;
 	public HidDevice HidDevice => hidDevice;
+	public Task? UpdateTask;
 
 	public void LogDeviceInfo() {
 		lock (SteamlessDriver.OutputLock) {

@@ -4,45 +4,99 @@ namespace SteamlessController.Driver;
 
 public static class ControllerManager {
 	public static readonly List<ControllerDevice> ActiveDevices = [];
-	public static readonly Dictionary<string, Task> ActiveTasksByDevicePath = new();
+	private static readonly Dictionary<string, CancellationTokenSource> _deviceCtsByPath = new();
+	private static readonly Dictionary<string, Task> _deviceTaskByPath = new();
+	private static readonly object _lock = new();
 
 	private static uint VendorId => SteamlessDriver.VendorId;
 	private static int[] ProductIds => SteamlessDriver.ProductIds;
 
-	public delegate void DeviceUpdateLoop(ControllerDevice device);
+	public delegate void DeviceUpdateLoop(ControllerDevice device, CancellationToken token);
 	
-	public static void ScanForDevices(CancellationToken ctsToken, DeviceUpdateLoop deviceUpdateLoop) {
+	public static void StartMonitoring(
+		CancellationToken appToken,
+		DeviceUpdateLoop deviceUpdateLoop
+	) {
+
+		DeviceList.Local.Changed += (_, _) => ScanForDevices(appToken, deviceUpdateLoop);
+
+		// initial scan
+		ScanForDevices(appToken, deviceUpdateLoop);
+	}
+	
+	public static void ScanForDevices(
+		CancellationToken appToken,
+		DeviceUpdateLoop deviceUpdateLoop
+	) {
 		Console.WriteLine("Scanning for devices...");
 
 		// Get all compatible hid devices
 		var devices = DeviceList.Local.GetHidDevices()
 			.Where(d => d.VendorID == VendorId && ProductIds.Contains(d.ProductID))
 			.ToList();
+		
+		var currentPaths = devices
+			.Select(d => d.DevicePath)
+			.ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-		// Create new ControllerDevices
-		foreach (var device in devices) {
-			Console.WriteLine($"Found device: {device.DevicePath}");
-			Console.WriteLine($"    VendorID: {device.VendorID}, ProductID: {device.ProductID}");
-			
-			Console.WriteLine($"Testing device connection: {device.DevicePath}");
-			if (device.TryOpen(out var hidStream)) {
-				hidStream.Close();
-			} else {
-				Console.WriteLine($"Failed to open device: {device.DevicePath}");
-				Console.WriteLine($"    Device will be ignored");
-				continue;
+		lock (_lock) {
+			// disconnects
+			for (var i = ActiveDevices.Count - 1; i >= 0; i--) {
+				var active = ActiveDevices[i];
+				if (currentPaths.Contains(active.DevicePath)) {
+					continue;
+				}
+
+				Console.WriteLine($"Device disconnected: {active.DevicePath}");
+				ActiveDevices.RemoveAt(i);
+
+				if (_deviceCtsByPath.TryGetValue(active.DevicePath, out var cts)) {
+					cts.Cancel();
+					cts.Dispose();
+					_deviceCtsByPath.Remove(active.DevicePath);
+				}
+
+				_deviceTaskByPath.Remove(active.DevicePath);
 			}
-			
-			// Log successful connection
-			Console.Write($"Device connected: ");
-			var controllerDevice = new ControllerDevice(device);
-			controllerDevice.LogDeviceInfo();
-			ActiveDevices.Add(controllerDevice);
 
-			// Start a new task to handle the device's input reports
-			var devicePath = controllerDevice.DevicePath;
-			var task = Task.Run(() => deviceUpdateLoop(controllerDevice), ctsToken);
-			ActiveTasksByDevicePath[devicePath] = task;
+			// connects
+			foreach (var device in devices) {
+				if (ActiveDevices.Any(d => d.DevicePath == device.DevicePath)) {
+					continue;
+				}
+
+				Console.WriteLine($"Device connected: {device.DevicePath}");
+
+				if (!device.TryOpen(out var hidStream)) {
+					Console.WriteLine($"Failed to open device: {device.DevicePath}");
+					continue;
+				}
+
+				hidStream.Close();
+
+				var controllerDevice = new ControllerDevice(device);
+				controllerDevice.LogDeviceInfo();
+				ActiveDevices.Add(controllerDevice);
+
+				var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(appToken);
+				_deviceCtsByPath[controllerDevice.DevicePath] = linkedCts;
+
+				var task = Task.Run(() => deviceUpdateLoop(controllerDevice, linkedCts.Token), linkedCts.Token);
+				_deviceTaskByPath[controllerDevice.DevicePath] = task;
+			}
+		}
+	}
+	
+	public static void StopMonitoring() {
+		lock (_lock) {
+			foreach (var cts in _deviceCtsByPath.Values) {
+				cts.Cancel();
+				cts.Dispose();
+			}
+
+			_deviceCtsByPath.Clear();
+			_deviceTaskByPath.Clear();
+			ActiveDevices.Clear();
 		}
 	}
 }
