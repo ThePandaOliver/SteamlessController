@@ -1,6 +1,6 @@
-﻿using HidSharp;
-using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using SteamlessController.Driver.Reports;
 using SteamlessController.Driver.utils;
 
 namespace SteamlessController.Driver;
@@ -9,7 +9,7 @@ public static class SteamlessDriver {
 	public const uint VendorId = 0x28DE;
 	public static readonly int[] ProductIds = [0x1302, 0x1304];
 	public static readonly object OutputLock = new();
-
+	
 	public static int Main(string[] args) {
 		using var host = Host.CreateDefaultBuilder(args)
 			.UseWindowsService()
@@ -74,7 +74,7 @@ public static class SteamlessDriver {
 				var reportId = decoder.ReadByte();
 
 				if (reportId == 0x42) {
-					// Console.WriteLine("Received input report");
+					device.currentInputState = ControllerInput.Decode(decoder);
 				} else {
 					Console.WriteLine($"Received unknown report: 0x{reportId:x2}");
 				}
