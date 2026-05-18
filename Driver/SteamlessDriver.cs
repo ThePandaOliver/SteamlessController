@@ -9,7 +9,7 @@ public static class SteamlessDriver {
 	public const uint VendorId = 0x28DE;
 	public static readonly int[] ProductIds = [0x1302, 0x1304];
 	public static readonly object OutputLock = new();
-	
+
 	public static int Main(string[] args) {
 		using var host = Host.CreateDefaultBuilder(args)
 			.UseWindowsService()
