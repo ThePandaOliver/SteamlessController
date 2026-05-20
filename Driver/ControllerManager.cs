@@ -4,13 +4,14 @@ namespace SteamlessController.Driver;
 
 public static class ControllerManager {
 	public static readonly List<ControllerDevice> ActiveDevices = [];
-	private static readonly Dictionary<string, CancellationTokenSource> _deviceCtsByPath = new();
-	private static readonly Dictionary<string, Task> _deviceTaskByPath = new();
-	private static readonly object _lock = new();
+	private static readonly Lock _lock = new();
 
 	private static uint VendorId => SteamlessDriver.VendorId;
 	private static int[] ProductIds => SteamlessDriver.ProductIds;
-
+	
+	public static event Action<ControllerDevice>? DeviceConnected;
+	public static event Action<ControllerDevice>? DeviceDisconnected;
+	
 	public delegate void DeviceUpdateLoop(ControllerDevice device, CancellationToken token);
 	
 	public static void StartMonitoring(
@@ -19,7 +20,7 @@ public static class ControllerManager {
 	) {
 
 		DeviceList.Local.Changed += (_, _) => ScanForDevices(appToken, deviceUpdateLoop);
-
+		
 		// initial scan
 		ScanForDevices(appToken, deviceUpdateLoop);
 	}
@@ -46,25 +47,16 @@ public static class ControllerManager {
 				if (currentPaths.Contains(active.DevicePath)) {
 					continue;
 				}
-
+				
+				DeviceDisconnected?.Invoke(active);
+				active.Cleanup();
+				
 				Console.WriteLine($"Device disconnected: {active.DevicePath}");
 				ActiveDevices.RemoveAt(i);
-
-				if (_deviceCtsByPath.TryGetValue(active.DevicePath, out var cts)) {
-					cts.Cancel();
-					cts.Dispose();
-					_deviceCtsByPath.Remove(active.DevicePath);
-				}
-
-				_deviceTaskByPath.Remove(active.DevicePath);
 			}
 
 			// connects
-			foreach (var device in devices) {
-				if (ActiveDevices.Any(d => d.DevicePath == device.DevicePath)) {
-					continue;
-				}
-
+			foreach (var device in devices.Where(device => ActiveDevices.All(d => d.DevicePath != device.DevicePath))) {
 				Console.WriteLine($"Device connected: {device.DevicePath}");
 
 				if (!device.TryOpen(out var hidStream)) {
@@ -79,23 +71,21 @@ public static class ControllerManager {
 				ActiveDevices.Add(controllerDevice);
 
 				var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(appToken);
-				_deviceCtsByPath[controllerDevice.DevicePath] = linkedCts;
-
+				controllerDevice.Cts = linkedCts;
+				
 				var task = Task.Run(() => deviceUpdateLoop(controllerDevice, linkedCts.Token), linkedCts.Token);
-				_deviceTaskByPath[controllerDevice.DevicePath] = task;
+				controllerDevice.UpdateTask = task;
+				DeviceConnected?.Invoke(controllerDevice);
 			}
 		}
 	}
 	
 	public static void StopMonitoring() {
 		lock (_lock) {
-			foreach (var cts in _deviceCtsByPath.Values) {
-				cts.Cancel();
-				cts.Dispose();
+			foreach (var device in ActiveDevices) {
+				device.Cleanup();
 			}
 
-			_deviceCtsByPath.Clear();
-			_deviceTaskByPath.Clear();
 			ActiveDevices.Clear();
 		}
 	}

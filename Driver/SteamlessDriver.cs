@@ -20,6 +20,8 @@ public static class SteamlessDriver {
 			.ApplicationStopping;
 
 		using var cts = CancellationTokenSource.CreateLinkedTokenSource(appStopping);
+		
+		Emulator.StartEmulator();
 
 		ControllerManager.StartMonitoring(cts.Token, DeviceLoop);
 
@@ -74,7 +76,8 @@ public static class SteamlessDriver {
 				var reportId = decoder.ReadByte();
 
 				if (reportId == 0x42) {
-					device.currentInputState = ControllerInput.Decode(decoder);
+					device.CurrentInputState = ControllerInput.Decode(decoder);
+					device.OnInputReceived();
 				} else {
 					Console.WriteLine($"Received unknown report: 0x{reportId:x2}");
 				}
