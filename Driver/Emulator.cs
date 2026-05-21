@@ -7,7 +7,7 @@ public static class Emulator {
 
 	public static void StartEmulator() {
 		_ctx = new HMContext();
-		int loaded = _ctx.LoadDefaultProfiles();
+		var loaded = _ctx.LoadDefaultProfiles();
 		Console.WriteLine($"  Loaded {loaded} embedded profiles");
 
 		Console.Write("  Installing driver... ");
@@ -44,6 +44,41 @@ public static class Emulator {
 		};
 
 		device.InputReceived += device => {
+			var input = device.CurrentInputState;
+			if (input == null) return;
+
+			ushort hat = 0;
+			if (input.DpadUp) hat |= 0x01;
+			if (input.DpadDown) hat |= 0x02;
+			if (input.DpadLeft) hat |= 0x04;
+			if (input.DpadRight) hat |= 0x08;
+			
+			HMButton buttons = HMButton.None;
+			if (input.A) buttons |= HMButton.A;
+			if (input.B) buttons |= HMButton.B;
+			if (input.X) buttons |= HMButton.X;
+			if (input.Y) buttons |= HMButton.Y;
+			if (input.Options) buttons |= HMButton.Start;
+			if (input.Share) buttons |= HMButton.Share;
+			if (input.L1) buttons |= HMButton.LeftBumper;
+			if (input.R1) buttons |= HMButton.RightBumper;
+			if (input.L3) buttons |= HMButton.LeftStick;
+			if (input.R3) buttons |= HMButton.RightStick;
+			
+			var state = new HMGamepadState {
+				Axes = HMGamepadStateHelpers.StandardAxes(ctrl.Profile,
+					leftStickX: input.StickL.X,
+					leftStickY: input.StickL.Y,
+					rightStickX: input.StickR.X,
+					rightStickY: input.StickR.Y,
+					leftTrigger: input.L2,
+					rightTrigger: input.R2
+				),
+				HatRaw = hat,
+				Buttons = buttons,
+			};
+			
+			ctrl.SubmitState(state);
 		};
 	}
 }
